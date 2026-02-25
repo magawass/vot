@@ -178,7 +178,7 @@
     <div id="page-admin" class="container hidden">
         <h2>Admin Setup</h2>
         <label style="font-size: 0.8rem; display:block; text-align:left;">Authorization code (GitHub Token):</label>
-        <input type="password" id="token-input" placeholder="ghp_xxxxxxxxxxxx">
+        <input type="text" id="token-input" placeholder="ghp_xxxxxxxxxxxx">
         
         <label style="font-size: 0.8rem; display:block; text-align:left; margin-top:10px;">Voting Session Password (Leave empty for none):</label>
         <input type="text" id="start-pass-input" placeholder="e.g. V">
@@ -217,7 +217,7 @@
         let voteHistory = [];
         let pollingInterval = null;
 
-        // --- 2. PASSWORD & NAVIGATION LOGIC (Moved to top for stability) ---
+        // --- 2. PASSWORD & NAVIGATION LOGIC ---
 
         function checkStartPassword() {
             if (!start_password || start_password === "") {
@@ -331,8 +331,11 @@
         }
 
         function saveAdmin() {
-            GITHUB_TOKEN = document.getElementById('token-input').value.trim();
-            safeSet('magawa_token', GITHUB_TOKEN);
+            const inputToken = document.getElementById('token-input').value.trim();
+            if(inputToken) {
+                GITHUB_TOKEN = inputToken;
+                safeSet('magawa_token', GITHUB_TOKEN);
+            }
             
             start_password = document.getElementById('start-pass-input').value.trim();
             safeSet('magawa_start_pass', start_password);
@@ -408,10 +411,25 @@
 
         // --- 5. GITHUB AUTOMATION ---
 
+        // Helper to grab token from input OR storage
+        function resolveToken() {
+            // 1. Check Input Field (Priority if user just typed it)
+            const inputField = document.getElementById('token-input');
+            if(inputField && inputField.value.trim() !== "") {
+                const token = inputField.value.trim();
+                GITHUB_TOKEN = token;
+                safeSet('magawa_token', token);
+                return token;
+            }
+            // 2. Check Variable/Storage
+            if(GITHUB_TOKEN) return GITHUB_TOKEN;
+            return safeGet('magawa_token', "");
+        }
+
         async function loadFromGitHub(isAuto = false) {
-            if(!GITHUB_TOKEN) GITHUB_TOKEN = safeGet('magawa_token', "");
-            if (!GITHUB_TOKEN) {
-                if(!isAuto) alert("No Token Found. Go to Admin Settings.");
+            const token = resolveToken();
+            if (!token) {
+                if(!isAuto) alert("No Token Found in Input Field or Storage.");
                 return;
             }
             
@@ -425,7 +443,7 @@
             try {
                 // Fetch with timestamp to avoid cache
                 const res = await fetch(url + "?t=" + new Date().getTime(), { 
-                    headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
+                    headers: { 'Authorization': `token ${token}` }
                 });
 
                 if (!res.ok) throw new Error("Connection Error: " + res.status);
@@ -450,7 +468,7 @@
 
                 if(!isAuto) {
                     alert("Data loaded successfully!");
-                    initAdmin();
+                    initAdmin(); // Refresh the input fields
                 } else if(statusDiv) {
                     statusDiv.innerText = "Synced: " + new Date().toLocaleTimeString();
                 }
@@ -464,8 +482,11 @@
         }
 
         async function syncToGitHub(isAuto = false) {
-            if(!GITHUB_TOKEN) GITHUB_TOKEN = safeGet('magawa_token', "");
-            if (!GITHUB_TOKEN) return;
+            const token = resolveToken();
+            if (!token) {
+                if(!isAuto) alert("Cannot Save: No Token Found.");
+                return;
+            }
 
             const btn = document.getElementById('sync-btn');
             const statusDiv = document.getElementById('sync-status');
@@ -480,7 +501,7 @@
             
             let sha = "";
             try {
-                const getRes = await fetch(url, { headers: { 'Authorization': `token ${GITHUB_TOKEN}` }});
+                const getRes = await fetch(url, { headers: { 'Authorization': `token ${token}` }});
                 if (getRes.ok) {
                     const data = await getRes.json();
                     sha = data.sha;
@@ -496,7 +517,7 @@
             try {
                 const putRes = await fetch(url, {
                     method: 'PUT',
-                    headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Content-Type': 'application/json' },
+                    headers: { 'Authorization': `token ${token}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: "Auto-Update", content: content, sha: sha })
                 });
 
