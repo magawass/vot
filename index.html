@@ -177,7 +177,11 @@
 
     <div id="page-admin" class="container hidden">
         <h2>Admin Setup</h2>
-        <label style="font-size: 0.8rem; display:block; text-align:left;">Authorization code (GitHub Token):</label>
+        
+        <label style="font-size: 0.8rem; display:block; text-align:left; font-weight:bold;">1. GitHub Repository Name (Required):</label>
+        <input type="text" id="repo-input" placeholder="e.g. yourusername/voting-system">
+        
+        <label style="font-size: 0.8rem; display:block; text-align:left; font-weight:bold; margin-top:5px;">2. Authorization Token (Required):</label>
         <input type="text" id="token-input" placeholder="ghp_xxxxxxxxxxxx">
         
         <label style="font-size: 0.8rem; display:block; text-align:left; margin-top:10px;">Voting Session Password (Leave empty for none):</label>
@@ -195,9 +199,7 @@
 
     <script>
         // --- 1. CORE VARIABLES & SAFE STORAGE ---
-        const REPO_PATH = "magawass/vot";
         
-        // Safely get data from storage to prevent crashes
         function safeGet(key, defaultVal) {
             try { return localStorage.getItem(key) || defaultVal; } 
             catch (e) { console.error("Storage Error", e); return defaultVal; }
@@ -209,6 +211,9 @@
         }
 
         let GITHUB_TOKEN = safeGet('magawa_token', ""); 
+        // Default to the original if not set, but user MUST change it
+        let REPO_PATH = safeGet('magawa_repo', "magawass/vot");
+        
         let start_password = safeGet('magawa_start_pass', "");
         let candidates = JSON.parse(safeGet('magawa_candidates', "[]"));
         let votes = JSON.parse(safeGet('magawa_votes', "{}"));
@@ -321,6 +326,7 @@
                 container.innerHTML += `<input type="text" class="admin-entry" placeholder="Candidate ${i+1} : Position" value="${val}">`;
             }
             document.getElementById('token-input').value = GITHUB_TOKEN;
+            document.getElementById('repo-input').value = REPO_PATH;
             document.getElementById('start-pass-input').value = start_password;
         }
 
@@ -331,15 +337,25 @@
         }
 
         function saveAdmin() {
+            // 1. Save Token
             const inputToken = document.getElementById('token-input').value.trim();
             if(inputToken) {
                 GITHUB_TOKEN = inputToken;
                 safeSet('magawa_token', GITHUB_TOKEN);
             }
             
+            // 2. Save Repo Name (CRITICAL FIX)
+            const inputRepo = document.getElementById('repo-input').value.trim();
+            if(inputRepo) {
+                REPO_PATH = inputRepo;
+                safeSet('magawa_repo', REPO_PATH);
+            }
+
+            // 3. Save Password
             start_password = document.getElementById('start-pass-input').value.trim();
             safeSet('magawa_start_pass', start_password);
 
+            // 4. Save Candidates
             const inputs = document.querySelectorAll('.admin-entry');
             candidates = [];
             inputs.forEach(input => {
@@ -353,8 +369,11 @@
                 }
             });
             safeSet('magawa_candidates', JSON.stringify(candidates));
+            
             goHome();
+            alert("Settings Saved. Attempting to sync...");
             startAutoRefresh();
+            syncToGitHub(true); // Attempt immediate save
         }
 
         function clearAllVotes() {
@@ -411,9 +430,8 @@
 
         // --- 5. GITHUB AUTOMATION ---
 
-        // Helper to grab token from input OR storage
+        // Helper to grab token
         function resolveToken() {
-            // 1. Check Input Field (Priority if user just typed it)
             const inputField = document.getElementById('token-input');
             if(inputField && inputField.value.trim() !== "") {
                 const token = inputField.value.trim();
@@ -421,15 +439,29 @@
                 safeSet('magawa_token', token);
                 return token;
             }
-            // 2. Check Variable/Storage
             if(GITHUB_TOKEN) return GITHUB_TOKEN;
             return safeGet('magawa_token', "");
+        }
+        
+        // Helper to grab Repo
+        function resolveRepo() {
+            const inputField = document.getElementById('repo-input');
+            if(inputField && inputField.value.trim() !== "") {
+                const repo = inputField.value.trim();
+                REPO_PATH = repo;
+                safeSet('magawa_repo', repo);
+                return repo;
+            }
+            if(REPO_PATH) return REPO_PATH;
+            return safeGet('magawa_repo', "");
         }
 
         async function loadFromGitHub(isAuto = false) {
             const token = resolveToken();
-            if (!token) {
-                if(!isAuto) alert("No Token Found in Input Field or Storage.");
+            const repo = resolveRepo();
+
+            if (!token || !repo) {
+                if(!isAuto) alert("Missing Token or Repository Name.");
                 return;
             }
             
@@ -438,18 +470,23 @@
             
             if(btn && !isAuto) btn.innerText = "Loading...";
 
-            const url = `https://api.github.com/repos/${REPO_PATH}/contents/results.json`;
+            const url = `https://api.github.com/repos/${repo}/contents/results.json`;
             
             try {
-                // Fetch with timestamp to avoid cache
                 const res = await fetch(url + "?t=" + new Date().getTime(), { 
                     headers: { 'Authorization': `token ${token}` }
                 });
 
-                if (!res.ok) throw new Error("Connection Error: " + res.status);
+                if (!res.ok) {
+                    if(res.status === 404) throw new Error("File not found (Save once first).");
+                    if(res.status === 401) throw new Error("Invalid Token.");
+                    throw new Error("Error " + res.status);
+                }
 
                 const data = await res.json();
-                const decodedContent = atob(data.content);
+                
+                // Decode UTF-8 correctly
+                const decodedContent = decodeURIComponent(escape(atob(data.content)));
                 const parsedData = JSON.parse(decodedContent);
 
                 if (parsedData.candidates && Array.isArray(parsedData.candidates)) {
@@ -468,13 +505,13 @@
 
                 if(!isAuto) {
                     alert("Data loaded successfully!");
-                    initAdmin(); // Refresh the input fields
+                    initAdmin(); 
                 } else if(statusDiv) {
                     statusDiv.innerText = "Synced: " + new Date().toLocaleTimeString();
                 }
 
             } catch (err) {
-                if(!isAuto) alert("Load Error: " + err.message);
+                if(!isAuto) alert("Load Failed: " + err.message);
                 console.log("Auto-load failed", err);
             } finally {
                 if(btn && !isAuto) btn.innerText = "FORCE RELOAD DATA";
@@ -483,8 +520,10 @@
 
         async function syncToGitHub(isAuto = false) {
             const token = resolveToken();
-            if (!token) {
-                if(!isAuto) alert("Cannot Save: No Token Found.");
+            const repo = resolveRepo();
+            
+            if (!token || !repo) {
+                if(!isAuto) alert("Cannot Save: Missing Token or Repository Name.");
                 return;
             }
 
@@ -497,7 +536,7 @@
             }
             if(statusDiv) statusDiv.innerText = "Saving...";
 
-            const url = `https://api.github.com/repos/${REPO_PATH}/contents/results.json`;
+            const url = `https://api.github.com/repos/${repo}/contents/results.json`;
             
             let sha = "";
             try {
@@ -508,11 +547,12 @@
                 }
             } catch(e) { console.log("New file creation"); }
 
-            const content = btoa(JSON.stringify({ 
+            // Encode using UTF-8 safe method
+            const content = btoa(unescape(encodeURIComponent(JSON.stringify({ 
                 last_updated: new Date().toLocaleString(), 
                 votes: votes, 
                 candidates: candidates 
-            }, null, 2));
+            }, null, 2))));
 
             try {
                 const putRes = await fetch(url, {
@@ -525,10 +565,12 @@
                     if(!isAuto) alert("Saved to GitHub!");
                     if(statusDiv) statusDiv.innerText = "Saved: " + new Date().toLocaleTimeString();
                 } else {
-                    throw new Error("GitHub rejected update");
+                    if(putRes.status === 404) throw new Error("Repository not found (Check Name).");
+                    if(putRes.status === 401) throw new Error("Permission Denied (Check Token).");
+                    throw new Error("GitHub Error " + putRes.status);
                 }
             } catch (err) { 
-                if(!isAuto) alert("Save Error: " + err.message); 
+                if(!isAuto) alert("Save Failed: " + err.message); 
                 if(statusDiv) statusDiv.innerText = "Save Failed!";
             } finally { 
                 if(!isAuto && btn) {
@@ -562,7 +604,7 @@
         // Initialize
         window.onload = function() {
             initAdmin();
-            if(GITHUB_TOKEN) {
+            if(GITHUB_TOKEN && REPO_PATH) {
                 loadFromGitHub(true);
                 startAutoRefresh();
             }
