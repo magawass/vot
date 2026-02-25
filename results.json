@@ -1,28 +1,22 @@
 {
-  "last_updated": "2/25/2026, 10:26:33 PM",
+  "last_updated": "2/25/2026, 11:02:40 PM",
   "votes": {
-    "mmmm": 1,
-    "John Doe": 2,
-    "Timothy": 4,
-    "Temwa": 3,
-    "Mike": 2
+    "John": 2,
+    "Timothy": 2,
+    "Yotamu": 1
   },
   "candidates": [
     {
-      "name": "John Doe",
-      "pos": "Head Boy"
+      "name": "John",
+      "pos": "Headboy"
     },
     {
       "name": "Timothy",
-      "pos": "Head Boy"
+      "pos": "Headboy"
     },
     {
-      "name": "Mike",
-      "pos": "Head Boy"
-    },
-    {
-      "name": "Temwa",
-      "pos": "Head Girl"
+      "name": "Yotamu",
+      "pos": "Headboy"
     }
   ]
 }
