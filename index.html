@@ -1,1 +1,314 @@
-﻿
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magawa Prefect Council Voting</title>
+    <style>
+        :root {
+            --primary-blue: #1a5f7a;
+            --accent-gold: #ffd700;
+            --light-bg: #f4f7f6;
+            --text-dark: #333;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--light-bg);
+            color: var(--text-dark);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 500px;
+            background: white;
+            margin-top: 50px;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .logo-placeholder {
+            width: 120px;
+            height: 120px;
+            background: var(--primary-blue);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            font-weight: bold;
+            border: 4px solid var(--accent-gold);
+        }
+
+        h1 { font-size: 1.5rem; color: var(--primary-blue); }
+
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.3s;
+        }
+
+        .btn-start { background: #27ae60; color: white; }
+        .btn-vote { background: var(--primary-blue); color: white; height: 100px; font-size: 1.5rem; }
+        .btn-results { background: #8e44ad; color: white; }
+        .btn-pass { background: #95a5a6; color: white; width: 48%; display: inline-block; }
+        .btn-back { background: #dee2e6; color: #333; width: 48%; display: inline-block; }
+        .flex-buttons { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; }
+
+        .btn-admin { 
+            background: transparent; 
+            color: #ccc; 
+            font-size: 0.8rem; 
+            border: 1px solid #eee;
+            margin-top: 30px;
+        }
+
+        .hidden { display: none; }
+
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        .results-list {
+            text-align: left;
+            margin-top: 20px;
+        }
+
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="page-home" class="container">
+        <div class="logo-placeholder">MAGAWA LOGO</div>
+        <h1>Magawa Prefect Council Voting</h1>
+        <button class="btn btn-start" onclick="startVoting()">START NEW SESSION</button>
+        <button class="btn btn-results" onclick="showResults()">VIEW RESULTS</button>
+        <button class="btn btn-admin" onclick="showAdmin()">Admin Settings</button>
+    </div>
+
+    <div id="page-voting" class="container hidden">
+        <h2 id="current-position" style="color: #666;">Position</h2>
+        <div id="candidate-box">
+            <button id="vote-btn" class="btn btn-vote" onclick="castVote()">Candidate Name</button>
+        </div>
+        <div class="flex-buttons">
+            <button class="btn btn-back" onclick="goPreviousCandidate()">BACK</button>
+            <button class="btn btn-pass" onclick="passVote()">PASS</button>
+        </div>
+        <p style="font-size: 0.85rem; color: #888;">Press <b>ENTER</b> to Vote | Candidate <span id="idx-tracker">1</span></p>
+    </div>
+
+    <div id="page-results" class="container hidden">
+        <h2>Election Results</h2>
+        <div id="results-display" class="results-list"></div>
+        <button id="sync-btn" class="btn" style="background: #2980b9; color: white;" onclick="syncToGitHub()">SYNC TO GITHUB</button>
+        <button class="btn btn-back" style="width:100%" onclick="goHome()">Back to Home</button>
+    </div>
+
+    <div id="page-admin" class="container hidden">
+        <h2>Admin Setup</h2>
+        <label style="font-size: 0.8rem; display:block; text-align:left;">GitHub Access Token:</label>
+        <input type="password" id="token-input" placeholder="Paste GitHub Token Here">
+        
+        <p style="font-size: 0.8rem; margin-top: 15px;">Candidates (Up to 40 - Format: Name : Position)</p>
+        <div id="admin-inputs" style="max-height: 250px; overflow-y: auto;"></div>
+        
+        <button class="btn btn-start" onclick="saveAdmin()">Save & Exit</button>
+        <button class="btn btn-back" style="width: 100%;" onclick="goHome()">Cancel</button>
+    </div>
+
+    <script>
+        const REPO_PATH = "magawass/vot";
+        let GITHUB_TOKEN = ""; 
+
+        let candidates = JSON.parse(localStorage.getItem('magawa_candidates')) || [];
+        let votes = JSON.parse(localStorage.getItem('magawa_votes')) || {};
+        let currentIndex = 0;
+        let voteHistory = [];
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === "Enter" && !document.getElementById('page-voting').classList.contains('hidden')) {
+                castVote();
+            }
+        });
+
+        // Surgical Fix: Support any number of candidates up to 40
+        function initAdmin() {
+            const container = document.getElementById('admin-inputs');
+            container.innerHTML = '';
+            for(let i=0; i<40; i++) {
+                let val = candidates[i] ? `${candidates[i].name}:${candidates[i].pos}` : "";
+                container.innerHTML += `<input type="text" class="admin-entry" placeholder="Candidate ${i+1} : Position" value="${val}">`;
+            }
+            document.getElementById('token-input').value = GITHUB_TOKEN;
+        }
+
+        function showAdmin() {
+            hideAll();
+            initAdmin();
+            document.getElementById('page-admin').classList.remove('hidden');
+        }
+
+        function saveAdmin() {
+            GITHUB_TOKEN = document.getElementById('token-input').value.trim();
+            const inputs = document.querySelectorAll('.admin-entry');
+            candidates = [];
+            inputs.forEach(input => {
+                if(input.value.trim().includes(':')) {
+                    let parts = input.value.split(':');
+                    let name = parts[0].trim();
+                    let pos = parts[1] ? parts[1].trim() : "Prefect";
+                    if(name !== "") candidates.push({ name: name, pos: pos });
+                }
+            });
+            localStorage.setItem('magawa_candidates', JSON.stringify(candidates));
+            goHome();
+        }
+
+        function startVoting() {
+            if(candidates.length === 0) return alert("Please enter at least one candidate in Admin first!");
+            votes = {};
+            candidates.forEach(c => votes[c.name] = 0);
+            currentIndex = 0;
+            voteHistory = [];
+            hideAll();
+            document.getElementById('page-voting').classList.remove('hidden');
+            updateVoteDisplay();
+        }
+
+        function updateVoteDisplay() {
+            if(currentIndex < candidates.length) {
+                document.getElementById('current-position').innerText = candidates[currentIndex].pos;
+                document.getElementById('vote-btn').innerText = candidates[currentIndex].name;
+                document.getElementById('idx-tracker').innerText = (currentIndex + 1) + " of " + candidates.length;
+            } else {
+                showResults();
+            }
+        }
+
+        function castVote() {
+            if(currentIndex >= candidates.length) return;
+            let name = candidates[currentIndex].name;
+            votes[name] = (votes[name] || 0) + 1;
+            voteHistory.push({index: currentIndex, voted: true});
+            currentIndex++;
+            updateVoteDisplay();
+        }
+
+        function passVote() {
+            if(currentIndex >= candidates.length) return;
+            voteHistory.push({index: currentIndex, voted: false});
+            currentIndex++;
+            updateVoteDisplay();
+        }
+
+        function goPreviousCandidate() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                let lastAction = voteHistory.pop();
+                if (lastAction && lastAction.voted) {
+                    let name = candidates[currentIndex].name;
+                    votes[name] = Math.max(0, votes[name] - 1);
+                }
+                updateVoteDisplay();
+            } else {
+                goHome();
+            }
+        }
+
+        function showResults() {
+            hideAll();
+            document.getElementById('page-results').classList.remove('hidden');
+            const display = document.getElementById('results-display');
+            display.innerHTML = '';
+            for (let name in votes) {
+                display.innerHTML += `
+                    <div class="result-item">
+                        <span>${name}</span>
+                        <strong>${votes[name]} votes</strong>
+                    </div>`;
+            }
+        }
+
+        async function syncToGitHub() {
+            if (!GITHUB_TOKEN) {
+                alert("Please paste your GitHub Token in Admin Settings first.");
+                showAdmin();
+                return;
+            }
+
+            const btn = document.getElementById('sync-btn');
+            btn.innerText = "Syncing...";
+            btn.disabled = true;
+
+            const url = `https://api.github.com/repos/${REPO_PATH}/contents/results.json`;
+            const content = btoa(JSON.stringify({ 
+                last_updated: new Date().toLocaleString(), 
+                total_candidates: candidates.length,
+                votes: votes 
+            }, null, 2));
+
+            let sha = "";
+            try {
+                const getRes = await fetch(url, { headers: { 'Authorization': `token ${GITHUB_TOKEN}` }});
+                if (getRes.ok) {
+                    const data = await getRes.json();
+                    sha = data.sha;
+                }
+
+                const putRes = await fetch(url, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: "Update Vote Results", content: content, sha: sha })
+                });
+
+                if (putRes.ok) alert("Results synced to GitHub successfully!");
+                else alert("Sync failed. Check token permissions.");
+            } catch (err) {
+                alert("Error: " + err.message);
+            } finally {
+                btn.innerText = "SYNC TO GITHUB";
+                btn.disabled = false;
+            }
+        }
+
+        function hideAll() {
+            document.querySelectorAll('.container').forEach(c => c.classList.add('hidden'));
+        }
+
+        function goHome() {
+            hideAll();
+            document.getElementById('page-home').classList.remove('hidden');
+        }
+
+        initAdmin();
+    </script>
+</body>
+</html>
