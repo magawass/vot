@@ -78,7 +78,8 @@
         .btn-pass { background: #95a5a6; color: white; width: 48%; display: inline-block; }
         .btn-back { background: #dee2e6; color: #333; width: 48%; display: inline-block; }
         .btn-clear { background: var(--danger-red); color: white; margin-top: 15px; }
-        .btn-load { background: #e67e22; color: white; margin-top: 15px; }
+        /* NEW STYLE FOR LOAD BUTTON */
+        .btn-load { background: #e67e22; color: white; margin-top: 15px; } 
         
         .flex-buttons { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; }
 
@@ -160,7 +161,7 @@
             <button class="btn" style="background:#27ae60; color:white; width:48%" onclick="downloadExcel()">EXCEL</button>
         </div>
 
-        <button id="sync-btn" class="btn" style="background: #2980b9; color: white;" onclick="syncToGitHub()">SAVE</button>
+        <button id="sync-btn" class="btn" style="background: #2980b9; color: white;" onclick="syncToGitHub()">SAVE TO GITHUB</button>
         <button class="btn btn-back" style="width:100%" onclick="goHome()">Back to Home</button>
     </div>
 
@@ -169,14 +170,14 @@
         <label style="font-size: 0.8rem; display:block; text-align:left;">Authorization code:</label>
         <input type="password" id="token-input" placeholder="Enter Code Here">
         
-        <label style="font-size: 0.8rem; display:block; text-align:left; margin-top:10px;">Session Password (Leave empty for none):</label>
+        <label style="font-size: 0.8rem; display:block; text-align:left; margin-top:10px;">Voting Session Password (Leave empty for none):</label>
         <input type="text" id="start-pass-input" placeholder="e.g. V">
 
         <p style="font-size: 0.8rem; margin-top: 15px;">Candidates (Up to 40 - Format: Name : Position)</p>
         <div id="admin-inputs" style="max-height: 200px; overflow-y: auto;"></div>
         
-        <!-- NEW LOAD BUTTON -->
-        <button class="btn btn-load" onclick="loadFromGitHub(event)">LOAD DATA</button>
+        <!-- NEW BUTTON ADDED HERE -->
+        <button class="btn btn-load" onclick="loadFromGitHub(event)">LOAD DATA FROM GITHUB</button>
         
         <button class="btn btn-clear" onclick="clearAllVotes()">CLEAR ALL VOTES</button>
         <button class="btn btn-start" onclick="saveAdmin()">Save & Exit</button>
@@ -215,14 +216,15 @@
             }
         }
 
+        // KEYBOARD SHORTCUTS SURGICAL FIX
         document.addEventListener('keydown', (e) => {
             const isVotingPage = !document.getElementById('page-voting').classList.contains('hidden');
             if (isVotingPage) {
                 if (e.key === "Enter") {
-                    e.preventDefault(); 
+                    e.preventDefault(); // Prevent accidental double triggers
                     castVote();
                 } else if (e.code === "Space") {
-                    e.preventDefault(); 
+                    e.preventDefault(); // Prevent page scrolling
                     passVote();
                 }
             }
@@ -275,7 +277,7 @@
         }
 
         function startVoting() {
-            if(candidates.length === 0) return alert("Please lowetsani ma candidates kaye!");
+            if(candidates.length === 0) return alert("Please madala lowetsani ma candidates kaye!");
             currentIndex = 0;
             voteHistory = [];
             hideAll();
@@ -366,46 +368,39 @@
             document.body.removeChild(link);
         }
 
-        // --- NEW GITHUB FUNCTIONS ---
-
-        // 1. LOAD: Fetches results.json, updates candidates and votes
+        // --- NEW FUNCTION: LOAD FROM GITHUB ---
         async function loadFromGitHub(e) {
             GITHUB_TOKEN = document.getElementById('token-input').value.trim();
-            if (!GITHUB_TOKEN) return alert("Please enter authorization code first.");
+            if (!GITHUB_TOKEN) return alert("Please enter GitHub Token in the input field above first.");
             
             const btn = e ? e.target : null;
             if(btn) btn.innerText = "Loading...";
 
-            // Use the API URL to get the file info (including content)
             const url = `https://api.github.com/repos/${REPO_PATH}/contents/results.json`;
             
             try {
-                const res = await fetch(url, { 
-                    headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
-                });
-
+                // Get the file content
+                const res = await fetch(url, { headers: { 'Authorization': `token ${GITHUB_TOKEN}` }});
                 if (!res.ok) throw new Error("Failed to fetch. Check Token or if file exists.");
 
                 const data = await res.json();
-                
-                // GitHub returns content encoded in Base64
+                // Content is Base64 encoded
                 const decodedContent = atob(data.content);
                 const parsedData = JSON.parse(decodedContent);
 
-                // Update Candidates
+                // Update Local Variables and Storage
                 if (parsedData.candidates && Array.isArray(parsedData.candidates)) {
                     candidates = parsedData.candidates;
                     localStorage.setItem('magawa_candidates', JSON.stringify(candidates));
                 }
 
-                // Update Votes
                 if (parsedData.votes) {
                     votes = parsedData.votes;
                     localStorage.setItem('magawa_votes', JSON.stringify(votes));
                 }
 
                 alert("Data loaded successfully!");
-                initAdmin(); // Refresh the inputs in the admin panel
+                initAdmin(); // Refresh the inputs
             } catch (err) {
                 alert("Error loading data: " + err.message);
             } finally {
@@ -413,31 +408,28 @@
             }
         }
 
-        // 2. SYNC: Saves Votes AND Candidates
+        // --- UPDATED SYNC FUNCTION (Now saves candidates too) ---
         async function syncToGitHub(isAuto = false) {
             if (!GITHUB_TOKEN) {
-                // Try to get token from input if global var is empty
                 let inputToken = document.getElementById('token-input').value.trim();
                 if(inputToken) GITHUB_TOKEN = inputToken;
             }
 
             if (!GITHUB_TOKEN) {
                 if(!isAuto) {
-                    alert("Please paste your authorization code first.");
+                    alert("Please paste your GitHub Token in Admin Settings first.");
                     showAdmin();
                 }
                 return;
             }
-
             const btn = document.getElementById('sync-btn');
             if(!isAuto && btn) {
                 btn.innerText = "Syncing...";
                 btn.disabled = true;
             }
-
             const url = `https://api.github.com/repos/${REPO_PATH}/contents/results.json`;
             
-            // We now save CANDIDATES as well, so the setup can be reloaded
+            // UPDATED PAYLOAD: Includes candidates
             const content = btoa(JSON.stringify({ 
                 last_updated: new Date().toLocaleString(), 
                 votes: votes,
@@ -446,25 +438,19 @@
 
             let sha = "";
             try {
-                // Get current SHA to update file
                 const getRes = await fetch(url, { headers: { 'Authorization': `token ${GITHUB_TOKEN}` }});
                 if (getRes.ok) {
                     const data = await getRes.json();
                     sha = data.sha;
                 }
-                // Push update
                 const putRes = await fetch(url, {
                     method: 'PUT',
                     headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: "Update Vote Results", content: content, sha: sha })
                 });
-
                 if (putRes.ok && !isAuto) alert("Results synced to GitHub successfully!");
-                if (!putRes.ok && !isAuto) throw new Error("GitHub rejected the request.");
-
-            } catch (err) { 
-                if(!isAuto) alert("Error: " + err.message); 
-            } finally { 
+            } catch (err) { if(!isAuto) alert("Error: " + err.message); } 
+            finally { 
                 if(!isAuto && btn) {
                     btn.innerText = "SAVE TO GITHUB"; 
                     btn.disabled = false; 
