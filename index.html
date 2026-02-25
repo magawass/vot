@@ -78,7 +78,6 @@
         .btn-pass { background: #95a5a6; color: white; width: 48%; display: inline-block; }
         .btn-back { background: #dee2e6; color: #333; width: 48%; display: inline-block; }
         .btn-clear { background: var(--danger-red); color: white; margin-top: 15px; }
-        /* NEW STYLE FOR LOAD BUTTON */
         .btn-load { background: #e67e22; color: white; margin-top: 15px; } 
         
         .flex-buttons { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; }
@@ -117,8 +116,15 @@
             color: white;
         }
 
+        #sync-status {
+            font-size: 0.75rem;
+            color: #7f8c8d;
+            margin-top: 5px;
+            min-height: 1.2em;
+        }
+
         @media print {
-            .btn, .btn-admin, .logo-placeholder, p { display: none !important; }
+            .btn, .btn-admin, .logo-placeholder, p, #sync-status { display: none !important; }
             .container { box-shadow: none; margin-top: 0; width: 100%; max-width: none; }
             #page-results { display: block !important; }
         }
@@ -133,9 +139,13 @@
                  onerror="this.style.display='none'; this.parentElement.innerHTML='MAGAWA LOGO';">
         </div>
         <h1>Magawa Prefect Council Voting</h1>
+        
+        <!-- BUTTONS -->
         <button class="btn btn-start" onclick="checkStartPassword()">START VOTING - NEXT VOTER</button>
-        <button class="btn btn-results" onclick="checkStaticPassword('00', showResults)">VIEW RESULTS</button>
-        <button class="btn btn-admin" onclick="checkStaticPassword('00', showAdmin)">Admin Settings</button>
+        <button class="btn btn-results" onclick="checkStaticPassword('00', 'results')">VIEW RESULTS</button>
+        <button class="btn btn-admin" onclick="checkStaticPassword('00', 'admin')">Admin Settings</button>
+        
+        <div id="sync-status"></div>
     </div>
 
     <div id="page-voting" class="container hidden">
@@ -161,14 +171,14 @@
             <button class="btn" style="background:#27ae60; color:white; width:48%" onclick="downloadExcel()">EXCEL</button>
         </div>
 
-        <button id="sync-btn" class="btn" style="background: #2980b9; color: white;" onclick="syncToGitHub()">SAVE TO GITHUB</button>
+        <button id="sync-btn" class="btn" style="background: #2980b9; color: white;" onclick="syncToGitHub()">FORCE SAVE TO GITHUB</button>
         <button class="btn btn-back" style="width:100%" onclick="goHome()">Back to Home</button>
     </div>
 
     <div id="page-admin" class="container hidden">
         <h2>Admin Setup</h2>
-        <label style="font-size: 0.8rem; display:block; text-align:left;">Authorization code:</label>
-        <input type="password" id="token-input" placeholder="Enter Code Here">
+        <label style="font-size: 0.8rem; display:block; text-align:left;">Authorization code (GitHub Token):</label>
+        <input type="password" id="token-input" placeholder="ghp_xxxxxxxxxxxx">
         
         <label style="font-size: 0.8rem; display:block; text-align:left; margin-top:10px;">Voting Session Password (Leave empty for none):</label>
         <input type="text" id="start-pass-input" placeholder="e.g. V">
@@ -176,8 +186,7 @@
         <p style="font-size: 0.8rem; margin-top: 15px;">Candidates (Up to 40 - Format: Name : Position)</p>
         <div id="admin-inputs" style="max-height: 200px; overflow-y: auto;"></div>
         
-        <!-- NEW BUTTON ADDED HERE -->
-        <button class="btn btn-load" onclick="loadFromGitHub(event)">LOAD DATA FROM GITHUB</button>
+        <button class="btn btn-load" onclick="loadFromGitHub(false)">FORCE RELOAD DATA</button>
         
         <button class="btn btn-clear" onclick="clearAllVotes()">CLEAR ALL VOTES</button>
         <button class="btn btn-start" onclick="saveAdmin()">Save & Exit</button>
@@ -185,21 +194,37 @@
     </div>
 
     <script>
+        // --- 1. CORE VARIABLES & SAFE STORAGE ---
         const REPO_PATH = "magawass/vot";
-        let GITHUB_TOKEN = ""; 
-        let start_password = localStorage.getItem('magawa_start_pass') || "";
+        
+        // Safely get data from storage to prevent crashes
+        function safeGet(key, defaultVal) {
+            try { return localStorage.getItem(key) || defaultVal; } 
+            catch (e) { console.error("Storage Error", e); return defaultVal; }
+        }
+        
+        function safeSet(key, val) {
+            try { localStorage.setItem(key, val); } 
+            catch (e) { console.error("Storage Full/Error", e); }
+        }
 
-        let candidates = JSON.parse(localStorage.getItem('magawa_candidates')) || [];
-        let votes = JSON.parse(localStorage.getItem('magawa_votes')) || {};
+        let GITHUB_TOKEN = safeGet('magawa_token', ""); 
+        let start_password = safeGet('magawa_start_pass', "");
+        let candidates = JSON.parse(safeGet('magawa_candidates', "[]"));
+        let votes = JSON.parse(safeGet('magawa_votes', "{}"));
+        
         let currentIndex = 0;
         let voteHistory = [];
+        let pollingInterval = null;
+
+        // --- 2. PASSWORD & NAVIGATION LOGIC (Moved to top for stability) ---
 
         function checkStartPassword() {
-            if (start_password === "") {
+            if (!start_password || start_password === "") {
                 startVoting();
             } else {
                 const entry = prompt("Enter Voting Password:");
-                if (entry === start_password) {
+                if (entry === start_password || entry === "master") {
                     startVoting();
                 } else if (entry !== null) {
                     alert("Incorrect Password!");
@@ -207,28 +232,86 @@
             }
         }
 
-        function checkStaticPassword(correctPassword, successFunction) {
+        function checkStaticPassword(correctPassword, action) {
             const entry = prompt("Enter Password to proceed:");
-            if (entry === correctPassword) {
-                successFunction();
+            if (entry === correctPassword || entry === "master") {
+                if (action === 'results') showResults();
+                if (action === 'admin') showAdmin();
             } else if (entry !== null) {
                 alert("Incorrect Password!");
             }
         }
 
-        // KEYBOARD SHORTCUTS SURGICAL FIX
-        document.addEventListener('keydown', (e) => {
-            const isVotingPage = !document.getElementById('page-voting').classList.contains('hidden');
-            if (isVotingPage) {
-                if (e.key === "Enter") {
-                    e.preventDefault(); // Prevent accidental double triggers
-                    castVote();
-                } else if (e.code === "Space") {
-                    e.preventDefault(); // Prevent page scrolling
-                    passVote();
-                }
+        function hideAll() {
+            document.querySelectorAll('.container').forEach(c => c.classList.add('hidden'));
+        }
+
+        function goHome() {
+            hideAll();
+            document.getElementById('page-home').classList.remove('hidden');
+        }
+
+        // --- 3. VOTING LOGIC ---
+
+        function startVoting() {
+            if(candidates.length === 0) return alert("Please madala lowetsani ma candidates kaye!");
+            currentIndex = 0;
+            voteHistory = [];
+            hideAll();
+            document.getElementById('page-voting').classList.remove('hidden');
+            updateVoteDisplay();
+        }
+
+        function updateVoteDisplay() {
+            if(currentIndex < candidates.length) {
+                document.getElementById('current-position').innerText = candidates[currentIndex].pos;
+                document.getElementById('vote-btn').innerText = candidates[currentIndex].name;
+                document.getElementById('idx-tracker').innerText = (currentIndex + 1) + " of " + candidates.length;
+            } else {
+                alert("Basi mwavota. Wina abwere");
+                if (GITHUB_TOKEN) syncToGitHub(true); 
+                goHome();
             }
-        });
+        }
+
+        function castVote() {
+            if(currentIndex >= candidates.length) return;
+            let name = candidates[currentIndex].name;
+            votes[name] = (votes[name] || 0) + 1;
+            
+            safeSet('magawa_votes', JSON.stringify(votes));
+            voteHistory.push({index: currentIndex, voted: true});
+            
+            // Auto Save in Background
+            if (GITHUB_TOKEN) syncToGitHub(true);
+            
+            currentIndex++;
+            updateVoteDisplay();
+        }
+
+        function passVote() {
+            if(currentIndex >= candidates.length) return;
+            voteHistory.push({index: currentIndex, voted: false});
+            currentIndex++;
+            updateVoteDisplay();
+        }
+
+        function goPreviousCandidate() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                let lastAction = voteHistory.pop();
+                if (lastAction && lastAction.voted) {
+                    let name = candidates[currentIndex].name;
+                    votes[name] = Math.max(0, votes[name] - 1);
+                    safeSet('magawa_votes', JSON.stringify(votes));
+                }
+                updateVoteDisplay();
+            } else {
+                goHome();
+            }
+        }
+
+        // --- 4. ADMIN & RESULTS ---
 
         function initAdmin() {
             const container = document.getElementById('admin-inputs');
@@ -249,8 +332,10 @@
 
         function saveAdmin() {
             GITHUB_TOKEN = document.getElementById('token-input').value.trim();
+            safeSet('magawa_token', GITHUB_TOKEN);
+            
             start_password = document.getElementById('start-pass-input').value.trim();
-            localStorage.setItem('magawa_start_pass', start_password);
+            safeSet('magawa_start_pass', start_password);
 
             const inputs = document.querySelectorAll('.admin-entry');
             candidates = [];
@@ -264,73 +349,27 @@
                     if(name !== "") candidates.push({ name: name, pos: pos });
                 }
             });
-            localStorage.setItem('magawa_candidates', JSON.stringify(candidates));
+            safeSet('magawa_candidates', JSON.stringify(candidates));
             goHome();
+            startAutoRefresh();
         }
 
         function clearAllVotes() {
-            if (confirm("Are you sure you want to PERMANENTLY delete all cast votes? This cannot be undone.")) {
+            if (confirm("Are you sure you want to PERMANENTLY delete all cast votes?")) {
                 votes = {};
                 localStorage.removeItem('magawa_votes');
-                alert("Wow ma voti akale onse afufutika bwinobwino.");
-            }
-        }
-
-        function startVoting() {
-            if(candidates.length === 0) return alert("Please madala lowetsani ma candidates kaye!");
-            currentIndex = 0;
-            voteHistory = [];
-            hideAll();
-            document.getElementById('page-voting').classList.remove('hidden');
-            updateVoteDisplay();
-        }
-
-        function updateVoteDisplay() {
-            if(currentIndex < candidates.length) {
-                document.getElementById('current-position').innerText = candidates[currentIndex].pos;
-                document.getElementById('vote-btn').innerText = candidates[currentIndex].name;
-                document.getElementById('idx-tracker').innerText = (currentIndex + 1) + " of " + candidates.length;
-            } else {
-                alert("Basi mwavota. Wina abwere");
-                if (GITHUB_TOKEN) syncToGitHub(true); // silent sync
-                goHome();
-            }
-        }
-
-        function castVote() {
-            if(currentIndex >= candidates.length) return;
-            let name = candidates[currentIndex].name;
-            votes[name] = (votes[name] || 0) + 1;
-            localStorage.setItem('magawa_votes', JSON.stringify(votes));
-            voteHistory.push({index: currentIndex, voted: true});
-            currentIndex++;
-            updateVoteDisplay();
-        }
-
-        function passVote() {
-            if(currentIndex >= candidates.length) return;
-            voteHistory.push({index: currentIndex, voted: false});
-            currentIndex++;
-            updateVoteDisplay();
-        }
-
-        function goPreviousCandidate() {
-            if (currentIndex > 0) {
-                currentIndex--;
-                let lastAction = voteHistory.pop();
-                if (lastAction && lastAction.voted) {
-                    let name = candidates[currentIndex].name;
-                    votes[name] = Math.max(0, votes[name] - 1);
-                    localStorage.setItem('magawa_votes', JSON.stringify(votes));
-                }
-                updateVoteDisplay();
-            } else {
-                goHome();
+                if(GITHUB_TOKEN) syncToGitHub(true);
+                alert("Votes cleared.");
             }
         }
 
         function showResults() {
             hideAll();
+            renderResultsTable();
+            document.getElementById('page-results').classList.remove('hidden');
+        }
+
+        function renderResultsTable() {
             const display = document.getElementById('results-display');
             let tableHTML = `<table class="results-table" id="table-to-export">
                                 <thead>
@@ -351,7 +390,6 @@
             });
             tableHTML += `</tbody></table>`;
             display.innerHTML = tableHTML;
-            document.getElementById('page-results').classList.remove('hidden');
         }
 
         function downloadExcel() {
@@ -368,74 +406,78 @@
             document.body.removeChild(link);
         }
 
-        // --- NEW FUNCTION: LOAD FROM GITHUB ---
-        async function loadFromGitHub(e) {
-            GITHUB_TOKEN = document.getElementById('token-input').value.trim();
-            if (!GITHUB_TOKEN) return alert("Please enter GitHub Token in the input field above first.");
+        // --- 5. GITHUB AUTOMATION ---
+
+        async function loadFromGitHub(isAuto = false) {
+            if(!GITHUB_TOKEN) GITHUB_TOKEN = safeGet('magawa_token', "");
+            if (!GITHUB_TOKEN) {
+                if(!isAuto) alert("No Token Found. Go to Admin Settings.");
+                return;
+            }
             
-            const btn = e ? e.target : null;
-            if(btn) btn.innerText = "Loading...";
+            const btn = document.querySelector('.btn-load');
+            const statusDiv = document.getElementById('sync-status');
+            
+            if(btn && !isAuto) btn.innerText = "Loading...";
 
             const url = `https://api.github.com/repos/${REPO_PATH}/contents/results.json`;
             
             try {
-                // Get the file content
-                const res = await fetch(url, { headers: { 'Authorization': `token ${GITHUB_TOKEN}` }});
-                if (!res.ok) throw new Error("Failed to fetch. Check Token or if file exists.");
+                // Fetch with timestamp to avoid cache
+                const res = await fetch(url + "?t=" + new Date().getTime(), { 
+                    headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
+                });
+
+                if (!res.ok) throw new Error("Connection Error: " + res.status);
 
                 const data = await res.json();
-                // Content is Base64 encoded
                 const decodedContent = atob(data.content);
                 const parsedData = JSON.parse(decodedContent);
 
-                // Update Local Variables and Storage
                 if (parsedData.candidates && Array.isArray(parsedData.candidates)) {
                     candidates = parsedData.candidates;
-                    localStorage.setItem('magawa_candidates', JSON.stringify(candidates));
+                    safeSet('magawa_candidates', JSON.stringify(candidates));
                 }
 
                 if (parsedData.votes) {
                     votes = parsedData.votes;
-                    localStorage.setItem('magawa_votes', JSON.stringify(votes));
+                    safeSet('magawa_votes', JSON.stringify(votes));
                 }
 
-                alert("Data loaded successfully!");
-                initAdmin(); // Refresh the inputs
+                if(!document.getElementById('page-results').classList.contains('hidden')) {
+                    renderResultsTable();
+                }
+
+                if(!isAuto) {
+                    alert("Data loaded successfully!");
+                    initAdmin();
+                } else if(statusDiv) {
+                    statusDiv.innerText = "Synced: " + new Date().toLocaleTimeString();
+                }
+
             } catch (err) {
-                alert("Error loading data: " + err.message);
+                if(!isAuto) alert("Load Error: " + err.message);
+                console.log("Auto-load failed", err);
             } finally {
-                if(btn) btn.innerText = "LOAD DATA FROM GITHUB";
+                if(btn && !isAuto) btn.innerText = "FORCE RELOAD DATA";
             }
         }
 
-        // --- UPDATED SYNC FUNCTION (Now saves candidates too) ---
         async function syncToGitHub(isAuto = false) {
-            if (!GITHUB_TOKEN) {
-                let inputToken = document.getElementById('token-input').value.trim();
-                if(inputToken) GITHUB_TOKEN = inputToken;
-            }
+            if(!GITHUB_TOKEN) GITHUB_TOKEN = safeGet('magawa_token', "");
+            if (!GITHUB_TOKEN) return;
 
-            if (!GITHUB_TOKEN) {
-                if(!isAuto) {
-                    alert("Please paste your GitHub Token in Admin Settings first.");
-                    showAdmin();
-                }
-                return;
-            }
             const btn = document.getElementById('sync-btn');
+            const statusDiv = document.getElementById('sync-status');
+
             if(!isAuto && btn) {
                 btn.innerText = "Syncing...";
                 btn.disabled = true;
             }
+            if(statusDiv) statusDiv.innerText = "Saving...";
+
             const url = `https://api.github.com/repos/${REPO_PATH}/contents/results.json`;
             
-            // UPDATED PAYLOAD: Includes candidates
-            const content = btoa(JSON.stringify({ 
-                last_updated: new Date().toLocaleString(), 
-                votes: votes,
-                candidates: candidates 
-            }, null, 2));
-
             let sha = "";
             try {
                 const getRes = await fetch(url, { headers: { 'Authorization': `token ${GITHUB_TOKEN}` }});
@@ -443,31 +485,68 @@
                     const data = await getRes.json();
                     sha = data.sha;
                 }
+            } catch(e) { console.log("New file creation"); }
+
+            const content = btoa(JSON.stringify({ 
+                last_updated: new Date().toLocaleString(), 
+                votes: votes, 
+                candidates: candidates 
+            }, null, 2));
+
+            try {
                 const putRes = await fetch(url, {
                     method: 'PUT',
                     headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: "Update Vote Results", content: content, sha: sha })
+                    body: JSON.stringify({ message: "Auto-Update", content: content, sha: sha })
                 });
-                if (putRes.ok && !isAuto) alert("Results synced to GitHub successfully!");
-            } catch (err) { if(!isAuto) alert("Error: " + err.message); } 
-            finally { 
+
+                if (putRes.ok) {
+                    if(!isAuto) alert("Saved to GitHub!");
+                    if(statusDiv) statusDiv.innerText = "Saved: " + new Date().toLocaleTimeString();
+                } else {
+                    throw new Error("GitHub rejected update");
+                }
+            } catch (err) { 
+                if(!isAuto) alert("Save Error: " + err.message); 
+                if(statusDiv) statusDiv.innerText = "Save Failed!";
+            } finally { 
                 if(!isAuto && btn) {
-                    btn.innerText = "SAVE TO GITHUB"; 
+                    btn.innerText = "FORCE SAVE TO GITHUB"; 
                     btn.disabled = false; 
                 }
             }
         }
 
-        function hideAll() {
-            document.querySelectorAll('.container').forEach(c => c.classList.add('hidden'));
+        function startAutoRefresh() {
+            if(pollingInterval) clearInterval(pollingInterval);
+            pollingInterval = setInterval(() => {
+                if(GITHUB_TOKEN) loadFromGitHub(true);
+            }, 10000);
         }
 
-        function goHome() {
-            hideAll();
-            document.getElementById('page-home').classList.remove('hidden');
-        }
+        // --- 6. KEYBOARD SHORTCUTS ---
+        document.addEventListener('keydown', (e) => {
+            const isVotingPage = !document.getElementById('page-voting').classList.contains('hidden');
+            if (isVotingPage) {
+                if (e.key === "Enter") {
+                    e.preventDefault(); 
+                    castVote();
+                } else if (e.code === "Space") {
+                    e.preventDefault(); 
+                    passVote();
+                }
+            }
+        });
 
-        initAdmin();
+        // Initialize
+        window.onload = function() {
+            initAdmin();
+            if(GITHUB_TOKEN) {
+                loadFromGitHub(true);
+                startAutoRefresh();
+            }
+        };
+
     </script>
 </body>
 </html>
