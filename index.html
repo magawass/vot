@@ -48,6 +48,13 @@
             margin: 0 auto 20px;
             font-weight: bold;
             border: 4px solid var(--accent-gold);
+            overflow: hidden;
+        }
+
+        .logo-placeholder img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
 
         h1 { font-size: 1.5rem; color: var(--primary-blue); }
@@ -118,7 +125,11 @@
 <body>
 
     <div id="page-home" class="container">
-        <div class="logo-placeholder">MAGAWA LOGO</div>
+        <div class="logo-placeholder">
+            <img src="https://raw.githubusercontent.com/magawass/vot/main/logo.png" 
+                 alt="Magawa Logo" 
+                 onerror="this.style.display='none'; this.parentElement.innerHTML='MAGAWA LOGO';">
+        </div>
         <h1>Magawa Prefect Council Voting</h1>
         <button class="btn btn-start" onclick="checkStartPassword()">START VOTING - NEXT VOTER</button>
         <button class="btn btn-results" onclick="checkStaticPassword('00', showResults)">VIEW RESULTS</button>
@@ -265,7 +276,8 @@
                 document.getElementById('vote-btn').innerText = candidates[currentIndex].name;
                 document.getElementById('idx-tracker').innerText = (currentIndex + 1) + " of " + candidates.length;
             } else {
-                alert("Voter session finished.");
+                alert("Voter session finished. Auto-syncing results...");
+                if (GITHUB_TOKEN) syncToGitHub(true); // silent sync
                 goHome();
             }
         }
@@ -341,15 +353,19 @@
             document.body.removeChild(link);
         }
 
-        async function syncToGitHub() {
+        async function syncToGitHub(isAuto = false) {
             if (!GITHUB_TOKEN) {
-                alert("Please paste your GitHub Token in Admin Settings first.");
-                showAdmin();
+                if(!isAuto) {
+                    alert("Please paste your GitHub Token in Admin Settings first.");
+                    showAdmin();
+                }
                 return;
             }
             const btn = document.getElementById('sync-btn');
-            btn.innerText = "Syncing...";
-            btn.disabled = true;
+            if(!isAuto) {
+                btn.innerText = "Syncing...";
+                btn.disabled = true;
+            }
             const url = `https://api.github.com/repos/${REPO_PATH}/contents/results.json`;
             const content = btoa(JSON.stringify({ last_updated: new Date().toLocaleString(), votes: votes }, null, 2));
             let sha = "";
@@ -364,10 +380,14 @@
                     headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: "Update Vote Results", content: content, sha: sha })
                 });
-                if (putRes.ok) alert("Results synced to GitHub successfully!");
-                else alert("Sync failed. Check token permissions.");
-            } catch (err) { alert("Error: " + err.message); } 
-            finally { btn.innerText = "SAVE"; btn.disabled = false; }
+                if (putRes.ok && !isAuto) alert("Results synced to GitHub successfully!");
+            } catch (err) { if(!isAuto) alert("Error: " + err.message); } 
+            finally { 
+                if(!isAuto) {
+                    btn.innerText = "SYNC TO GITHUB"; 
+                    btn.disabled = false; 
+                }
+            }
         }
 
         function hideAll() {
